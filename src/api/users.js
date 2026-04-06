@@ -1,7 +1,8 @@
 import { api } from './http'
 
+/** Dashboard console: ADMIN / DATA_ENTRY only; role enforced server-side. */
 export function login(body) {
-  return api('/api/User/auth', { method: 'POST', body, auth: false })
+  return api('/api/User/auth/dashboard', { method: 'POST', body, auth: false })
 }
 
 export function fetchUsers(params) {

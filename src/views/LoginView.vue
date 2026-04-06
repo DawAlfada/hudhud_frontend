@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login } from '../api/users'
 import { setStoredAuth } from '../api/http'
+import { canAccessConsole } from '../utils/roles'
 import { alertError } from '../utils/alerts'
 import { validatePhone, validatePassword } from '../utils/validation'
 import PasswordField from '../components/PasswordField.vue'
@@ -31,8 +32,8 @@ function clearFieldErrors() {
 
 onMounted(() => {
   if (route.query.logout) error.value = ''
-  if (route.query.reason === 'admin') {
-    const msg = 'Only administrators can access this console.'
+  if (route.query.reason === 'console' || route.query.reason === 'admin') {
+    const msg = 'Sign-in requires an administrator or support account.'
     error.value = msg
     alertError(msg)
   }
@@ -52,8 +53,8 @@ async function submit() {
     const data = await login({ phoneNumber: phoneNumber.value.trim(), password: password.value })
     const user = data.result
     if (!user?.token) throw new Error('No token returned')
-    if (user.role !== 'ADMIN') {
-      const msg = 'Only administrators can access this console.'
+    if (!canAccessConsole(user.role)) {
+      const msg = 'Sign-in requires an administrator or support account.'
       error.value = msg
       alertError(msg)
       return
@@ -88,7 +89,7 @@ async function submit() {
         </div>
       </div>
       <p class="mb-6 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-        Administrators only. Regular user accounts cannot open this console.
+        Administrator and support accounts only. Regular app users cannot open this console.
       </p>
       <label class="mb-4 block text-sm font-semibold text-zinc-800 dark:text-zinc-200" for="login-phone">
         Phone number

@@ -1,5 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { getStoredAuth, authTick } from '../api/http'
+import { isFullAdmin } from '../utils/roles'
 import {
   fetchUsers,
   updateUser,
@@ -14,6 +17,14 @@ import { validatePhone, validateName, validatePassword, validateOtp } from '../u
 import PasswordField from '../components/PasswordField.vue'
 import DataTableSkeleton from '../components/DataTableSkeleton.vue'
 import UserAvatar from '../components/UserAvatar.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+const isAdmin = computed(() => {
+  authTick.value
+  return isFullAdmin(getStoredAuth()?.user?.role)
+})
 
 const dialogBackdrop =
   'fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-5 backdrop-blur-sm'
@@ -87,6 +98,7 @@ async function load() {
 }
 
 function openEdit(u) {
+  if (!isAdmin.value) return
   editUser.value = u
   editForm.value = { name: u.name, phoneNumber: u.phoneNumber, password: '' }
   editErrors.value = { name: '', phone: '', password: '' }
@@ -94,7 +106,7 @@ function openEdit(u) {
 }
 
 async function saveEdit() {
-  if (!editUser.value) return
+  if (!isAdmin.value || !editUser.value) return
   err.value = ''
   const nameE = validateName(editForm.value.name, 'Name')
   const phoneE = validatePhone(editForm.value.phoneNumber)
@@ -237,7 +249,13 @@ const iconBtnKey =
 const iconBtnTrash =
   'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200/80 bg-white text-zinc-500 shadow-sm transition hover:scale-[1.03] hover:border-red-200 hover:bg-red-50 hover:text-red-600 active:scale-[0.97] dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400 dark:hover:border-red-500/35 dark:hover:bg-red-500/10 dark:hover:text-red-400'
 
-onMounted(load)
+onMounted(() => {
+  if (route.query.reason === 'admin-only') {
+    alertInfo('That area is only available to full administrators.')
+    router.replace({ name: 'users' })
+  }
+  load()
+})
 </script>
 
 <template>
@@ -246,16 +264,21 @@ onMounted(load)
       <div>
         <h1 class="mb-0 text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Users</h1>
         <p class="mt-1.5 max-w-xl text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Manage accounts — register, edit, reset passwords, or remove users.
+          {{
+            isAdmin
+              ? 'Manage accounts — register, edit, reset passwords, or remove users.'
+              : 'View users and reset passwords — support tools only.'
+          }}
         </p>
       </div>
       <button
+        v-if="isAdmin"
         type="button"
         class="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-primary/25 transition hover:bg-secondary hover:shadow-secondary/25 active:scale-[0.98]"
         @click="openRegister"
       >
         <Icon icon="heroicons:plus" class="h-4 w-4" aria-hidden="true" />
-        Register
+        Add New User
       </button>
     </header>
 
@@ -337,7 +360,9 @@ onMounted(load)
                   :class="
                     u.role === 'ADMIN'
                       ? 'bg-primary/15 text-primary ring-primary/25 dark:ring-primary/35'
-                      : 'bg-zinc-500/10 text-zinc-700 ring-zinc-500/15 dark:text-zinc-300 dark:ring-white/10'
+                      : u.role === 'DATA_ENTRY'
+                        ? 'bg-amber-500/12 text-amber-900 ring-amber-500/20 dark:text-amber-200 dark:ring-amber-400/25'
+                        : 'bg-zinc-500/10 text-zinc-700 ring-zinc-500/15 dark:text-zinc-300 dark:ring-white/10'
                   "
                 >
                   {{ u.role }}
@@ -346,6 +371,7 @@ onMounted(load)
               <td class="whitespace-nowrap px-5 py-3 text-right">
                 <div class="inline-flex items-center justify-end gap-1.5">
                   <button
+                    v-if="isAdmin"
                     type="button"
                     :class="iconBtnEdit"
                     title="Edit user"
@@ -364,6 +390,7 @@ onMounted(load)
                     <Icon icon="heroicons:key" class="h-4 w-4" aria-hidden="true" />
                   </button>
                   <button
+                    v-if="isAdmin"
                     type="button"
                     :class="iconBtnTrash"
                     title="Delete user"
@@ -409,7 +436,7 @@ onMounted(load)
     </footer>
 
     <!-- Edit modal -->
-    <div v-if="editOpen" :class="dialogBackdrop" @click.self="editOpen = false">
+    <div v-if="isAdmin && editOpen" :class="dialogBackdrop" @click.self="editOpen = false">
       <div :class="dialogPanel" role="dialog" aria-labelledby="edit-dialog-title">
         <header class="mb-5">
           <h2 id="edit-dialog-title" class="m-0 text-lg font-semibold tracking-tight text-gray-50">Edit user</h2>

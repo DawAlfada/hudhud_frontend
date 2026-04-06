@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter, RouterLink, RouterView } from 'vue-router'
 import { getToken, authTick, getStoredAuth, clearStoredAuth } from './api/http'
+import { isFullAdmin } from './utils/roles'
 import AppAlertDialog from './components/AppAlertDialog.vue'
 import AppConfirmDialog from './components/AppConfirmDialog.vue'
 import UserAvatar from './components/UserAvatar.vue'
@@ -26,9 +27,19 @@ const profile = computed(() => {
   return auth?.user ?? null
 })
 
-function logout() {
-  clearStoredAuth()
-  router.push({ name: 'login', query: { logout: '1' } })
+const showAdminNav = computed(() => {
+  authTick.value
+  return isFullAdmin(getStoredAuth()?.user?.role)
+})
+
+async function logout() {
+  try {
+    // Navigate first so the route is /login before authed becomes false. If we clear auth
+    // first, v-else mounts RouterView while the URL is still /users and UsersView runs load().
+    await router.push({ name: 'login', query: { logout: '1' } })
+  } finally {
+    clearStoredAuth()
+  }
 }
 </script>
 
@@ -65,15 +76,15 @@ function logout() {
             <Icon icon="heroicons:users" class="h-[1.125rem] w-[1.125rem] shrink-0 opacity-80" aria-hidden="true" />
             <span class="whitespace-nowrap">Users</span>
           </RouterLink>
-          <RouterLink to="/chats" :class="navLink" :active-class="navActive">
+          <RouterLink v-if="showAdminNav" to="/chats" :class="navLink" :active-class="navActive">
             <Icon icon="heroicons:chat-bubble-left-right" class="h-[1.125rem] w-[1.125rem] shrink-0 opacity-80" aria-hidden="true" />
             <span class="whitespace-nowrap">P2P chats</span>
           </RouterLink>
-          <RouterLink to="/group-chats" :class="navLink" :active-class="navActive">
+          <RouterLink v-if="showAdminNav" to="/group-chats" :class="navLink" :active-class="navActive">
             <Icon icon="heroicons:user-group" class="h-[1.125rem] w-[1.125rem] shrink-0 opacity-80" aria-hidden="true" />
             <span class="whitespace-nowrap">Group chats</span>
           </RouterLink>
-          <RouterLink to="/agent" :class="navLink" :active-class="navActive">
+          <RouterLink v-if="showAdminNav" to="/agent" :class="navLink" :active-class="navActive">
             <Icon icon="heroicons:chat-bubble-oval-left-ellipsis" class="h-[1.125rem] w-[1.125rem] shrink-0 opacity-80" aria-hidden="true" />
             <span class="whitespace-nowrap">Agent</span>
           </RouterLink>

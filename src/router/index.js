@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getToken, getStoredAuth, clearStoredAuth } from '../api/http'
+import { canAccessConsole, isFullAdmin } from '../utils/roles'
 
 import LoginView from '../views/LoginView.vue'
 import UsersView from '../views/UsersView.vue'
@@ -14,10 +15,16 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
     { path: '/', redirect: '/users' },
     { path: '/users', name: 'users', component: UsersView },
-    { path: '/chats', name: 'chats', component: ChatsView },
-    { path: '/group-chats', name: 'group-chats', component: GroupChatsView },
-    { path: '/chats/:chatId/messages', name: 'chat-messages', component: ChatMessagesView, props: true },
-    { path: '/agent', name: 'agent', component: AgentChatView },
+    { path: '/chats', name: 'chats', component: ChatsView, meta: { requiresAdmin: true } },
+    { path: '/group-chats', name: 'group-chats', component: GroupChatsView, meta: { requiresAdmin: true } },
+    {
+      path: '/chats/:chatId/messages',
+      name: 'chat-messages',
+      component: ChatMessagesView,
+      props: true,
+      meta: { requiresAdmin: true },
+    },
+    { path: '/agent', name: 'agent', component: AgentChatView, meta: { requiresAdmin: true } },
   ],
 })
 
@@ -25,9 +32,12 @@ router.beforeEach((to) => {
   if (to.meta.public) return true
   if (!getToken()) return { name: 'login', query: { redirect: to.fullPath } }
   const role = getStoredAuth()?.user?.role
-  if (role !== 'ADMIN') {
+  if (!canAccessConsole(role)) {
     clearStoredAuth()
-    return { name: 'login', query: { reason: 'admin' } }
+    return { name: 'login', query: { reason: 'console' } }
+  }
+  if (to.meta.requiresAdmin && !isFullAdmin(role)) {
+    return { name: 'users', query: { reason: 'admin-only' } }
   }
   return true
 })
