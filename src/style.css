@@ -1,0 +1,13 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-primary: #ff7100;
+  --color-secondary: #ff4700;
+}
+
+/* App-wide tweaks on top of Preflight */
+@layer base {
+  html {
+    @apply antialiased;
+  }
+}
