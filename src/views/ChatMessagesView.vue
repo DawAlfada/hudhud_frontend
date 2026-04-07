@@ -158,14 +158,13 @@ function attachmentFileName(a) {
 /** Presigned CDN URLs used as-is; otherwise resolved URL from storageKey map. */
 /** @param {Record<string, unknown>} a */
 function urlFromAttachment(a) {
-  const direct = directUrlFromAttachment(a)
-  if (direct) return direct
   const sk = attachmentStorageKey(a)
   if (sk) {
     const resolved = resolvedByStorageKey.value.get(sk)
     return resolved ? String(resolved) : ''
   }
-  return ''
+  const direct = directUrlFromAttachment(a)
+  return direct || ''
 }
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|heic|avif)(\?|#|$)/i
@@ -610,7 +609,6 @@ async function resolveAttachmentUrlsForMessages(msgs) {
     if (!Array.isArray(list)) continue
     for (const raw of list) {
       const a = /** @type {Record<string, unknown>} */ (raw)
-      if (directUrlFromAttachment(a)) continue
       const sk = attachmentStorageKey(a)
       if (sk) keys.add(sk)
     }
@@ -683,7 +681,17 @@ const threadShell =
   'rounded-3xl border border-zinc-200/60 bg-zinc-50/90 p-4 shadow-inner dark:border-white/[0.08] dark:bg-zinc-900/35 sm:p-5'
 
 const bubbleBase =
-  'inline-block max-w-full rounded-2xl rounded-tl-md border border-zinc-200/70 bg-white px-3.5 py-2.5 shadow-sm dark:border-white/[0.08] dark:bg-zinc-800/90'
+  'max-w-full rounded-2xl rounded-tl-md border border-zinc-200/70 bg-white px-3.5 py-2.5 shadow-sm dark:border-white/[0.08] dark:bg-zinc-800/90'
+
+/** Keep audio bubbles wide enough for native controls. */
+/** @param {Record<string, unknown>} m */
+function bubbleClassForMessage(m) {
+  const base = bubbleBase
+  if (effectiveMessageKind(m) === 'audio') {
+    return `block w-full max-w-md ${base}`
+  }
+  return `inline-block ${base}`
+}
 
 /** Native <audio> can report a tiny intrinsic width before metadata loads or on error; inline-block bubbles would shrink to a vertical sliver. */
 const audioPlayerShell = 'block w-full max-w-sm min-w-[min(100%,18rem)]'
@@ -751,7 +759,7 @@ const audioPlayerShell = 'block w-full max-w-sm min-w-[min(100%,18rem)]'
               </span>
             </div>
 
-            <div :class="bubbleBase">
+            <div :class="bubbleClassForMessage(m)">
               <template v-if="effectiveMessageKind(m) === 'image'">
                 <template v-for="ig in [imageGridState(m)]" :key="`${m.id}-img-grid`">
                   <div v-if="ig.n" class="space-y-2">
