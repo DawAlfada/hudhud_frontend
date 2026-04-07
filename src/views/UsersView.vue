@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getStoredAuth, authTick } from '../api/http'
 import { isFullAdmin } from '../utils/roles'
@@ -13,7 +13,7 @@ import {
 } from '../api/users'
 import { alertError, alertInfo, alertSuccess } from '../utils/alerts'
 import { confirmDialog } from '../utils/appConfirm'
-import { validatePhone, validateName, validatePassword, validateOtp } from '../utils/validation'
+import { validateName, validatePassword, validateOtp } from '../utils/validation'
 import PasswordField from '../components/PasswordField.vue'
 import DataTableSkeleton from '../components/DataTableSkeleton.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -61,10 +61,14 @@ const editForm = ref({ name: '', phoneNumber: '', password: '' })
 const registerOpen = ref(false)
 const regForm = ref({ fullName: '', phoneNumber: '', password: '', otpCode: '' })
 const regBusy = ref(false)
+const regOtpCooldown = ref(0)
+const regOtpCooldownUntil = ref(0)
 
 const resetOpen = ref(false)
 const resetForm = ref({ phoneNumber: '', otpCode: '', newPassword: '' })
 const resetBusy = ref(false)
+const resetOtpCooldown = ref(0)
+const resetOtpCooldownUntil = ref(0)
 
 const editErrors = ref({ name: '', phone: '', password: '' })
 const regErrors = ref({ fullName: '', phone: '', password: '', otpCode: '' })
@@ -72,9 +76,64 @@ const resetErrors = ref({ otpCode: '', newPassword: '' })
 
 const fieldInvalid = (msg) =>
   msg ? 'border-red-400/65 ring-1 ring-red-400/25 focus:border-red-400/50' : ''
+const OTP_COOLDOWN_SECONDS = 30
+const IRAQ_CC = '964'
+
+let otpCooldownTimer = null
+
+const canSendRegOtp = computed(() => !regBusy.value && regOtpCooldown.value === 0)
+const canSendResetOtp = computed(() => !resetBusy.value && resetOtpCooldown.value === 0)
+
+function updateOtpCooldowns() {
+  const now = Date.now()
+  regOtpCooldown.value = Math.max(0, Math.ceil((regOtpCooldownUntil.value - now) / 1000))
+  resetOtpCooldown.value = Math.max(0, Math.ceil((resetOtpCooldownUntil.value - now) / 1000))
+  if (regOtpCooldown.value === 0) regOtpCooldownUntil.value = 0
+  if (resetOtpCooldown.value === 0) resetOtpCooldownUntil.value = 0
+  if (regOtpCooldown.value === 0 && resetOtpCooldown.value === 0 && otpCooldownTimer) {
+    clearInterval(otpCooldownTimer)
+    otpCooldownTimer = null
+  }
+}
+
+function startOtpCooldown(kind) {
+  const until = Date.now() + OTP_COOLDOWN_SECONDS * 1000
+  if (kind === 'register') regOtpCooldownUntil.value = until
+  else resetOtpCooldownUntil.value = until
+  updateOtpCooldowns()
+  if (!otpCooldownTimer) otpCooldownTimer = setInterval(updateOtpCooldowns, 1000)
+}
 
 function totalPages() {
   return Math.max(1, Math.ceil(total.value / pageSize.value))
+}
+
+function normalizeIraqiPhone(v) {
+  const digits = String(v || '').replace(/\D/g, '')
+  if (!digits) return ''
+  let local = digits
+  if (digits.startsWith('00' + IRAQ_CC)) local = digits.slice(5)
+  else if (digits.startsWith(IRAQ_CC)) local = digits.slice(3)
+  else if (digits.startsWith('0')) local = digits.slice(1)
+  return `${IRAQ_CC}${local}`.slice(0, 13)
+}
+
+function validateIraqiPhone(v) {
+  const normalized = normalizeIraqiPhone(v)
+  if (!normalized) return 'Phone number is required'
+  if (!normalized.startsWith('9647')) return 'Phone must start with 7 after 964'
+  if (normalized.length !== 13) return 'Phone must be in format 9647XXXXXXXXX'
+  return ''
+}
+
+function onRegPhoneInput() {
+  regForm.value.phoneNumber = normalizeIraqiPhone(regForm.value.phoneNumber)
+  regErrors.value.phone = ''
+}
+
+function onEditPhoneInput() {
+  editForm.value.phoneNumber = normalizeIraqiPhone(editForm.value.phoneNumber)
+  editErrors.value.phone = ''
 }
 
 async function load() {
@@ -100,7 +159,7 @@ async function load() {
 function openEdit(u) {
   if (!isAdmin.value) return
   editUser.value = u
-  editForm.value = { name: u.name, phoneNumber: u.phoneNumber, password: '' }
+  editForm.value = { name: u.name, phoneNumber: normalizeIraqiPhone(u.phoneNumber), password: '' }
   editErrors.value = { name: '', phone: '', password: '' }
   editOpen.value = true
 }
@@ -109,14 +168,14 @@ async function saveEdit() {
   if (!isAdmin.value || !editUser.value) return
   err.value = ''
   const nameE = validateName(editForm.value.name, 'Name')
-  const phoneE = validatePhone(editForm.value.phoneNumber)
+  const phoneE = validateIraqiPhone(editForm.value.phoneNumber)
   const passE = validatePassword(editForm.value.password, { optional: true, label: 'New password' })
   editErrors.value = { name: nameE, phone: phoneE, password: passE }
   if (nameE || phoneE || passE) return
   try {
     const body = {
       name: editForm.value.name || null,
-      phoneNumber: editForm.value.phoneNumber || null,
+      phoneNumber: normalizeIraqiPhone(editForm.value.phoneNumber) || null,
       password: editForm.value.password || null,
     }
     await updateUser(editUser.value.id, body)
@@ -147,19 +206,23 @@ async function confirmDelete(u) {
 }
 
 function openRegister() {
-  regForm.value = { fullName: '', phoneNumber: '', password: '', otpCode: '' }
+  regForm.value = { fullName: '', phoneNumber: IRAQ_CC, password: '', otpCode: '' }
   regErrors.value = { fullName: '', phone: '', password: '', otpCode: '' }
+  regOtpCooldown.value = 0
+  regOtpCooldownUntil.value = 0
   registerOpen.value = true
 }
 
 async function sendRegOtp() {
+  if (!canSendRegOtp.value) return
   err.value = ''
-  const phoneE = validatePhone(regForm.value.phoneNumber)
+  const phoneE = validateIraqiPhone(regForm.value.phoneNumber)
   regErrors.value = { ...regErrors.value, phone: phoneE }
   if (phoneE) return
   regBusy.value = true
   try {
-    await sendOtp(regForm.value.phoneNumber)
+    await sendOtp(normalizeIraqiPhone(regForm.value.phoneNumber))
+    startOtpCooldown('register')
     alertInfo('OTP sent (check SMS / dev logs).')
   } catch (e) {
     err.value = e.message
@@ -173,14 +236,14 @@ async function submitRegister() {
   err.value = ''
   regErrors.value = {
     fullName: validateName(regForm.value.fullName, 'Full name'),
-    phone: validatePhone(regForm.value.phoneNumber),
+    phone: validateIraqiPhone(regForm.value.phoneNumber),
     password: validatePassword(regForm.value.password),
     otpCode: validateOtp(regForm.value.otpCode),
   }
   if (Object.values(regErrors.value).some(Boolean)) return
   regBusy.value = true
   try {
-    await register({ ...regForm.value })
+    await register({ ...regForm.value, phoneNumber: normalizeIraqiPhone(regForm.value.phoneNumber) })
     registerOpen.value = false
     await load()
     alertSuccess('User registered.')
@@ -193,16 +256,20 @@ async function submitRegister() {
 }
 
 function openReset(u) {
-  resetForm.value = { phoneNumber: u.phoneNumber, otpCode: '', newPassword: '' }
+  resetForm.value = { phoneNumber: normalizeIraqiPhone(u.phoneNumber), otpCode: '', newPassword: '' }
   resetErrors.value = { otpCode: '', newPassword: '' }
+  resetOtpCooldown.value = 0
+  resetOtpCooldownUntil.value = 0
   resetOpen.value = true
 }
 
 async function sendResetOtp() {
+  if (!canSendResetOtp.value) return
   resetBusy.value = true
   err.value = ''
   try {
-    await sendOtp(resetForm.value.phoneNumber)
+    await sendOtp(normalizeIraqiPhone(resetForm.value.phoneNumber))
+    startOtpCooldown('reset')
     alertInfo('OTP sent.')
   } catch (e) {
     err.value = e.message
@@ -255,6 +322,12 @@ onMounted(() => {
     router.replace({ name: 'users' })
   }
   load()
+})
+
+onUnmounted(() => {
+  if (!otpCooldownTimer) return
+  clearInterval(otpCooldownTimer)
+  otpCooldownTimer = null
 })
 </script>
 
@@ -462,8 +535,9 @@ onMounted(() => {
               type="tel"
               autocomplete="off"
               inputmode="tel"
-              maxlength="20"
-              @input="editErrors.phone = ''"
+              maxlength="13"
+              placeholder="9647XXXXXXXXX"
+              @input="onEditPhoneInput"
             />
             <p v-if="editErrors.phone" class="m-0 text-xs font-medium text-red-400">{{ editErrors.phone }}</p>
           </label>
@@ -491,7 +565,7 @@ onMounted(() => {
     <div v-if="registerOpen" :class="dialogBackdrop" @click.self="registerOpen = false">
       <div :class="dialogPanel" role="dialog" aria-labelledby="register-dialog-title">
         <header class="mb-5">
-          <h2 id="register-dialog-title" class="m-0 text-lg font-semibold tracking-tight text-gray-50">Register user</h2>
+          <h2 id="register-dialog-title" class="m-0 text-lg font-semibold tracking-tight text-gray-50">Create New User</h2>
           <p class="mt-1.5 text-[0.8125rem] leading-snug text-gray-400">Uses public registration: send OTP, then submit with the code.</p>
         </header>
         <div class="flex flex-col gap-4">
@@ -515,8 +589,9 @@ onMounted(() => {
               type="tel"
               autocomplete="tel"
               inputmode="tel"
-              maxlength="20"
-              @input="regErrors.phone = ''"
+              maxlength="13"
+              placeholder="9647XXXXXXXXX"
+              @input="onRegPhoneInput"
             />
             <p v-if="regErrors.phone" class="m-0 text-xs font-medium text-red-400">{{ regErrors.phone }}</p>
           </label>
@@ -533,20 +608,37 @@ onMounted(() => {
           </div>
           <label class="m-0 flex flex-col gap-2">
             <span :class="fieldLabel">OTP</span>
-            <input
-              v-model="regForm.otpCode"
-              :class="[fieldInput, fieldInvalid(regErrors.otpCode)]"
-              type="text"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="8"
-              @input="regErrors.otpCode = ''"
-            />
+            <div class="flex items-start gap-2">
+              <input
+                v-model="regForm.otpCode"
+                :class="[fieldInput, fieldInvalid(regErrors.otpCode)]"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="8"
+                @input="regErrors.otpCode = ''"
+              />
+              <button
+                v-if="regOtpCooldown === 0"
+                type="button"
+                :class="btnOutline"
+                class="shrink-0 whitespace-nowrap"
+                :disabled="!canSendRegOtp"
+                @click="sendRegOtp"
+              >
+                Send OTP
+              </button>
+              <span
+                v-else
+                class="inline-flex h-[42px] shrink-0 items-center rounded-[10px] border border-white/20 px-3 text-sm font-medium text-gray-300"
+              >
+                Resend in {{ regOtpCooldown }}s
+              </span>
+            </div>
             <p v-if="regErrors.otpCode" class="m-0 text-xs font-medium text-red-400">{{ regErrors.otpCode }}</p>
           </label>
         </div>
         <footer class="mt-6 flex flex-wrap justify-end gap-2.5 pt-1">
-          <button type="button" :class="btnOutline" :disabled="regBusy" @click="sendRegOtp">Send OTP</button>
           <button type="button" :class="btnPrimary" :disabled="regBusy" @click="submitRegister">Register</button>
         </footer>
       </div>
@@ -571,15 +663,33 @@ onMounted(() => {
           </label>
           <label class="m-0 flex flex-col gap-2">
             <span :class="fieldLabel">OTP</span>
-            <input
-              v-model="resetForm.otpCode"
-              :class="[fieldInput, fieldInvalid(resetErrors.otpCode)]"
-              type="text"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="8"
-              @input="resetErrors.otpCode = ''"
-            />
+            <div class="flex items-start gap-2">
+              <input
+                v-model="resetForm.otpCode"
+                :class="[fieldInput, fieldInvalid(resetErrors.otpCode)]"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="8"
+                @input="resetErrors.otpCode = ''"
+              />
+              <button
+                v-if="resetOtpCooldown === 0"
+                type="button"
+                :class="btnOutline"
+                class="shrink-0 whitespace-nowrap"
+                :disabled="!canSendResetOtp"
+                @click="sendResetOtp"
+              >
+                Send OTP
+              </button>
+              <span
+                v-else
+                class="inline-flex h-[42px] shrink-0 items-center rounded-[10px] border border-white/20 px-3 text-sm font-medium text-gray-300"
+              >
+                Resend in {{ resetOtpCooldown }}s
+              </span>
+            </div>
             <p v-if="resetErrors.otpCode" class="m-0 text-xs font-medium text-red-400">{{ resetErrors.otpCode }}</p>
           </label>
           <div class="m-0 flex flex-col gap-2">
@@ -595,7 +705,6 @@ onMounted(() => {
           </div>
         </div>
         <footer class="mt-6 flex flex-wrap justify-end gap-2.5 pt-1">
-          <button type="button" :class="btnOutline" :disabled="resetBusy" @click="sendResetOtp">Send OTP</button>
           <button type="button" :class="btnPrimary" :disabled="resetBusy" @click="submitReset">Update password</button>
         </footer>
       </div>

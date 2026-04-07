@@ -7,10 +7,10 @@ const toastShadow =
 
 const shell = {
   error:
-    'border-orange-200/90 bg-[#fff4ed] dark:border-orange-500/25 dark:bg-orange-950/35',
+    'border-orange-200/90 bg-[#fff4ed] dark:border-orange-500/25 dark:bg-orange-950',
   success:
-    'border-emerald-200/90 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-950/35',
-  info: 'border-sky-200/90 bg-sky-50 dark:border-sky-500/25 dark:bg-sky-950/40',
+    'border-emerald-200/90 bg-emerald-50 dark:border-emerald-500/25 dark:bg-emerald-950',
+  info: 'border-sky-200/90 bg-sky-50 dark:border-sky-500/25 dark:bg-sky-950',
 }
 
 const titleC = {
