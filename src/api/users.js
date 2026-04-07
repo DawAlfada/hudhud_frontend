@@ -22,6 +22,10 @@ export function updateUser(id, body) {
   return api(`/api/User/${id}`, { method: 'PUT', body })
 }
 
+export function updateUserPhone(id, body) {
+  return api(`/api/User/${id}/phone`, { method: 'PUT', body })
+}
+
 export function deleteUser(id) {
   return api(`/api/User/${id}`, { method: 'DELETE' })
 }

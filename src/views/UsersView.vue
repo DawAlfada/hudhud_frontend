@@ -6,6 +6,7 @@ import { isFullAdmin } from '../utils/roles'
 import {
   fetchUsers,
   updateUser,
+  updateUserPhone,
   deleteUser,
   sendOtp,
   register,
@@ -70,6 +71,14 @@ const resetBusy = ref(false)
 const resetOtpCooldown = ref(0)
 const resetOtpCooldownUntil = ref(0)
 
+const phoneOpen = ref(false)
+const phoneBusy = ref(false)
+const phoneTargetUser = ref(null)
+const phoneForm = ref({ phoneNumber: IRAQ_CC, otpCode: '' })
+const phoneErrors = ref({ phone: '', otpCode: '' })
+const phoneOtpCooldown = ref(0)
+const phoneOtpCooldownUntil = ref(0)
+
 const editErrors = ref({ name: '', phone: '', password: '' })
 const regErrors = ref({ fullName: '', phone: '', password: '', otpCode: '' })
 const resetErrors = ref({ otpCode: '', newPassword: '' })
@@ -83,14 +92,17 @@ let otpCooldownTimer = null
 
 const canSendRegOtp = computed(() => !regBusy.value && regOtpCooldown.value === 0)
 const canSendResetOtp = computed(() => !resetBusy.value && resetOtpCooldown.value === 0)
+const canSendPhoneOtp = computed(() => !phoneBusy.value && phoneOtpCooldown.value === 0)
 
 function updateOtpCooldowns() {
   const now = Date.now()
   regOtpCooldown.value = Math.max(0, Math.ceil((regOtpCooldownUntil.value - now) / 1000))
   resetOtpCooldown.value = Math.max(0, Math.ceil((resetOtpCooldownUntil.value - now) / 1000))
+  phoneOtpCooldown.value = Math.max(0, Math.ceil((phoneOtpCooldownUntil.value - now) / 1000))
   if (regOtpCooldown.value === 0) regOtpCooldownUntil.value = 0
   if (resetOtpCooldown.value === 0) resetOtpCooldownUntil.value = 0
-  if (regOtpCooldown.value === 0 && resetOtpCooldown.value === 0 && otpCooldownTimer) {
+  if (phoneOtpCooldown.value === 0) phoneOtpCooldownUntil.value = 0
+  if (regOtpCooldown.value === 0 && resetOtpCooldown.value === 0 && phoneOtpCooldown.value === 0 && otpCooldownTimer) {
     clearInterval(otpCooldownTimer)
     otpCooldownTimer = null
   }
@@ -99,7 +111,8 @@ function updateOtpCooldowns() {
 function startOtpCooldown(kind) {
   const until = Date.now() + OTP_COOLDOWN_SECONDS * 1000
   if (kind === 'register') regOtpCooldownUntil.value = until
-  else resetOtpCooldownUntil.value = until
+  else if (kind === 'reset') resetOtpCooldownUntil.value = until
+  else phoneOtpCooldownUntil.value = until
   updateOtpCooldowns()
   if (!otpCooldownTimer) otpCooldownTimer = setInterval(updateOtpCooldowns, 1000)
 }
@@ -136,6 +149,11 @@ function onEditPhoneInput() {
   editErrors.value.phone = ''
 }
 
+function onPhoneUpdateInput() {
+  phoneForm.value.phoneNumber = normalizeIraqiPhone(phoneForm.value.phoneNumber)
+  phoneErrors.value.phone = ''
+}
+
 async function load() {
   err.value = ''
   loading.value = true
@@ -168,14 +186,12 @@ async function saveEdit() {
   if (!isAdmin.value || !editUser.value) return
   err.value = ''
   const nameE = validateName(editForm.value.name, 'Name')
-  const phoneE = validateIraqiPhone(editForm.value.phoneNumber)
   const passE = validatePassword(editForm.value.password, { optional: true, label: 'New password' })
-  editErrors.value = { name: nameE, phone: phoneE, password: passE }
-  if (nameE || phoneE || passE) return
+  editErrors.value = { name: nameE, phone: '', password: passE }
+  if (nameE || passE) return
   try {
     const body = {
       name: editForm.value.name || null,
-      phoneNumber: normalizeIraqiPhone(editForm.value.phoneNumber) || null,
       password: editForm.value.password || null,
     }
     await updateUser(editUser.value.id, body)
@@ -279,6 +295,59 @@ async function sendResetOtp() {
   }
 }
 
+function openPhoneUpdate(u) {
+  phoneTargetUser.value = u
+  phoneForm.value = { phoneNumber: normalizeIraqiPhone(u.phoneNumber), otpCode: '' }
+  phoneErrors.value = { phone: '', otpCode: '' }
+  phoneOtpCooldown.value = 0
+  phoneOtpCooldownUntil.value = 0
+  phoneOpen.value = true
+}
+
+async function sendPhoneOtp() {
+  if (!canSendPhoneOtp.value) return
+  err.value = ''
+  const phoneE = validateIraqiPhone(phoneForm.value.phoneNumber)
+  phoneErrors.value = { ...phoneErrors.value, phone: phoneE }
+  if (phoneE) return
+  phoneBusy.value = true
+  try {
+    await sendOtp(normalizeIraqiPhone(phoneForm.value.phoneNumber))
+    startOtpCooldown('phone')
+    alertInfo('OTP sent.')
+  } catch (e) {
+    err.value = e.message
+    alertError(e)
+  } finally {
+    phoneBusy.value = false
+  }
+}
+
+async function submitPhoneUpdate() {
+  if (!phoneTargetUser.value?.id) return
+  err.value = ''
+  phoneErrors.value = {
+    phone: validateIraqiPhone(phoneForm.value.phoneNumber),
+    otpCode: validateOtp(phoneForm.value.otpCode),
+  }
+  if (Object.values(phoneErrors.value).some(Boolean)) return
+  phoneBusy.value = true
+  try {
+    await updateUserPhone(phoneTargetUser.value.id, {
+      phoneNumber: normalizeIraqiPhone(phoneForm.value.phoneNumber),
+      otpCode: String(phoneForm.value.otpCode || '').trim(),
+    })
+    phoneOpen.value = false
+    await load()
+    alertSuccess('Phone number updated.')
+  } catch (e) {
+    err.value = e.message
+    alertError(e)
+  } finally {
+    phoneBusy.value = false
+  }
+}
+
 async function submitReset() {
   err.value = ''
   resetErrors.value = {
@@ -312,6 +381,9 @@ const iconBtnEdit =
 
 const iconBtnKey =
   'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200/80 bg-white text-zinc-500 shadow-sm transition hover:scale-[1.03] hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700 active:scale-[0.97] dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400 dark:hover:border-amber-500/35 dark:hover:bg-amber-500/10 dark:hover:text-amber-300'
+
+const iconBtnPhone =
+  'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200/80 bg-white text-zinc-500 shadow-sm transition hover:scale-[1.03] hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700 active:scale-[0.97] dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400 dark:hover:border-sky-500/35 dark:hover:bg-sky-500/10 dark:hover:text-sky-300'
 
 const iconBtnTrash =
   'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-200/80 bg-white text-zinc-500 shadow-sm transition hover:scale-[1.03] hover:border-red-200 hover:bg-red-50 hover:text-red-600 active:scale-[0.97] dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400 dark:hover:border-red-500/35 dark:hover:bg-red-500/10 dark:hover:text-red-400'
@@ -455,6 +527,15 @@ onUnmounted(() => {
                   </button>
                   <button
                     type="button"
+                    :class="iconBtnPhone"
+                    title="Update phone number"
+                    aria-label="Update phone number"
+                    @click="openPhoneUpdate(u)"
+                  >
+                    <Icon icon="heroicons:device-phone-mobile" class="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
                     :class="iconBtnKey"
                     title="Reset password"
                     aria-label="Reset password"
@@ -531,15 +612,12 @@ onUnmounted(() => {
             <span :class="fieldLabel">Phone</span>
             <input
               v-model="editForm.phoneNumber"
-              :class="[fieldInput, fieldInvalid(editErrors.phone)]"
+              :class="`${fieldInput} ${fieldInputReadonly}`"
               type="tel"
-              autocomplete="off"
-              inputmode="tel"
+              readonly
               maxlength="13"
-              placeholder="9647XXXXXXXXX"
-              @input="onEditPhoneInput"
             />
-            <p v-if="editErrors.phone" class="m-0 text-xs font-medium text-red-400">{{ editErrors.phone }}</p>
+            <p class="m-0 text-xs text-gray-400">Phone update uses a separate OTP-verified action.</p>
           </label>
           <div class="m-0 flex flex-col gap-2">
             <span :class="fieldLabel">New password</span>
@@ -640,6 +718,73 @@ onUnmounted(() => {
         </div>
         <footer class="mt-6 flex flex-wrap justify-end gap-2.5 pt-1">
           <button type="button" :class="btnPrimary" :disabled="regBusy" @click="submitRegister">Register</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Update phone modal -->
+    <div v-if="phoneOpen" :class="dialogBackdrop" @click.self="phoneOpen = false">
+      <div :class="dialogPanel" role="dialog" aria-labelledby="phone-dialog-title">
+        <header class="mb-5">
+          <h2 id="phone-dialog-title" class="m-0 text-lg font-semibold tracking-tight text-gray-50">Update phone number</h2>
+          <p class="mt-1.5 text-[0.8125rem] leading-snug text-gray-400">
+            {{
+              phoneTargetUser?.name
+                ? `Send OTP to the new number, then confirm to update ${phoneTargetUser.name}.`
+                : 'Send OTP to the new number, then confirm.'
+            }}
+          </p>
+        </header>
+        <div class="flex flex-col gap-4">
+          <label class="m-0 flex flex-col gap-2">
+            <span :class="fieldLabel">New phone</span>
+            <input
+              v-model="phoneForm.phoneNumber"
+              :class="[fieldInput, fieldInvalid(phoneErrors.phone)]"
+              type="tel"
+              autocomplete="tel"
+              inputmode="tel"
+              maxlength="13"
+              placeholder="9647XXXXXXXXX"
+              @input="onPhoneUpdateInput"
+            />
+            <p v-if="phoneErrors.phone" class="m-0 text-xs font-medium text-red-400">{{ phoneErrors.phone }}</p>
+          </label>
+          <label class="m-0 flex flex-col gap-2">
+            <span :class="fieldLabel">OTP</span>
+            <div class="flex items-start gap-2">
+              <input
+                v-model="phoneForm.otpCode"
+                :class="[fieldInput, fieldInvalid(phoneErrors.otpCode)]"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="8"
+                @input="phoneErrors.otpCode = ''"
+              />
+              <button
+                v-if="phoneOtpCooldown === 0"
+                type="button"
+                :class="btnOutline"
+                class="shrink-0 whitespace-nowrap"
+                :disabled="!canSendPhoneOtp"
+                @click="sendPhoneOtp"
+              >
+                Send OTP
+              </button>
+              <span
+                v-else
+                class="inline-flex h-[42px] shrink-0 items-center rounded-[10px] border border-white/20 px-3 text-sm font-medium text-gray-300"
+              >
+                Resend in {{ phoneOtpCooldown }}s
+              </span>
+            </div>
+            <p v-if="phoneErrors.otpCode" class="m-0 text-xs font-medium text-red-400">{{ phoneErrors.otpCode }}</p>
+          </label>
+        </div>
+        <footer class="mt-6 flex flex-wrap justify-end gap-2.5 pt-1">
+          <button type="button" :class="btnOutline" :disabled="phoneBusy" @click="phoneOpen = false">Cancel</button>
+          <button type="button" :class="btnPrimary" :disabled="phoneBusy" @click="submitPhoneUpdate">Update phone</button>
         </footer>
       </div>
     </div>
